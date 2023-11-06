@@ -1,0 +1,1284 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NanzeRT <nanotest.vlad@gmail.com>
+Date: Mon, 6 Nov 2023 05:35:02 +0300
+Subject: [PATCH] RustMC
+
+
+diff --git a/src/main/java/io/rustmc/Glue.java b/src/main/java/io/rustmc/Glue.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..db23d2f129e27c9596cca69c144c909a2ebf8712
+--- /dev/null
++++ b/src/main/java/io/rustmc/Glue.java
+@@ -0,0 +1,11 @@
++package io.rustmc;
++
++import java.lang.ref.Cleaner;
++
++public class Glue {
++    private static Cleaner cleaner = Cleaner.create();
++
++    public static Cleaner getCleaner() {
++        return cleaner;
++    }
++}
+diff --git a/src/main/java/net/minecraft/world/level/levelgen/Aquifer.java b/src/main/java/net/minecraft/world/level/levelgen/Aquifer.java
+index 45aebcc19ad308843c40aa6e6fd990d660fa0b8d..c64e9b34d8b4d013c978257fefbf75d53a139541 100644
+--- a/src/main/java/net/minecraft/world/level/levelgen/Aquifer.java
++++ b/src/main/java/net/minecraft/world/level/levelgen/Aquifer.java
+@@ -1,29 +1,55 @@
+ package net.minecraft.world.level.levelgen;
+ 
+-import java.util.Arrays;
+-import javax.annotation.Nullable;
++// import java.util.Arrays;
++import io.rustmc.Glue;
++
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.core.SectionPos;
+ import net.minecraft.util.Mth;
+-import net.minecraft.util.RandomSource;
++// import net.minecraft.util.RandomSource;
+ import net.minecraft.world.level.ChunkPos;
+ import net.minecraft.world.level.biome.OverworldBiomeBuilder;
+ import net.minecraft.world.level.block.Blocks;
+ import net.minecraft.world.level.block.state.BlockState;
+ import net.minecraft.world.level.dimension.DimensionType;
+-import org.apache.commons.lang3.mutable.MutableDouble;
++// import org.apache.commons.lang3.mutable.MutableDouble;
++import net.minecraft.world.level.levelgen.DensityFunctions.Noise;
++import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator.FluidPickerFromNoiseChunk;
++
++import javax.annotation.Nullable;
+ 
+ public interface Aquifer {
+-    static Aquifer create(NoiseChunk chunkNoiseSampler, ChunkPos chunkPos, NoiseRouter noiseRouter, PositionalRandomFactory randomSplitter, int minimumY, int height, Aquifer.FluidPicker fluidLevelSampler) {
+-        return new Aquifer.NoiseBasedAquifer(chunkNoiseSampler, chunkPos, noiseRouter, randomSplitter, minimumY, height, fluidLevelSampler);
++    static Aquifer create(
++            NoiseChunk chunkNoiseSampler,
++            ChunkPos chunkPos,
++            NoiseRouter noiseRouter,
++            PositionalRandomFactory randomSplitter,
++            int minimumY,
++            int height,
++            Aquifer.FluidPicker fluidLevelSampler) {
++        return new Aquifer.NoiseBasedAquifer(
++                chunkNoiseSampler,
++                chunkPos,
++                noiseRouter,
++                randomSplitter,
++                minimumY,
++                height,
++                fluidLevelSampler);
+     }
+ 
+     static Aquifer createDisabled(final Aquifer.FluidPicker fluidLevelSampler) {
+         return new Aquifer() {
+             @Nullable
+             @Override
+-            public BlockState computeSubstance(DensityFunction.FunctionContext pos, double density) {
+-                return density > 0.0D ? null : fluidLevelSampler.computeFluid(pos.blockX(), pos.blockY(), pos.blockZ()).at(pos.blockY());
++            public BlockState computeSubstance(
++                    DensityFunction.FunctionContext pos, double density) {
++                return density > 0.0D
++                        ? null
++                        // rustmc
++                        : ((FluidPickerFromNoiseChunk)fluidLevelSampler)
++                                // .computeFluid(pos.blockX(), pos.blockY(), pos.blockZ())
++                                // .at(pos.blockY());
++                                .computeFluidAt(pos.blockX(), pos.blockY(), pos.blockZ(), pos.blockY());
+             }
+ 
+             @Override
+@@ -67,7 +93,8 @@ public interface Aquifer {
+         private static final int Y_SPACING = 12;
+         private static final int Z_SPACING = 16;
+         private static final int MAX_REASONABLE_DISTANCE_TO_AQUIFER_CENTER = 11;
+-        private static final double FLOWING_UPDATE_SIMULARITY = similarity(Mth.square(10), Mth.square(12));
++        // private static final double FLOWING_UPDATE_SIMULARITY = similarity(Mth.square(10),
++        // Mth.square(12));
+         private final NoiseChunk noiseChunk;
+         private final DensityFunction barrierNoise;
+         private final DensityFunction fluidLevelFloodednessNoise;
+@@ -75,7 +102,7 @@ public interface Aquifer {
+         private final DensityFunction lavaNoise;
+         private final PositionalRandomFactory positionalRandomFactory;
+         private final Aquifer.FluidStatus[] aquiferCache;
+-        private final long[] aquiferLocationCache;
++        // private final long[] aquiferLocationCache;
+         private final Aquifer.FluidPicker globalFluidPicker;
+         private final DensityFunction erosion;
+         private final DensityFunction depth;
+@@ -85,9 +112,22 @@ public interface Aquifer {
+         private final int minGridZ;
+         private final int gridSizeX;
+         private final int gridSizeZ;
+-        private static final int[][] SURFACE_SAMPLING_OFFSETS_IN_CHUNKS = new int[][]{{0, 0}, {-2, -1}, {-1, -1}, {0, -1}, {1, -1}, {-3, 0}, {-2, 0}, {-1, 0}, {1, 0}, {-2, 1}, {-1, 1}, {0, 1}, {1, 1}};
+-
+-        NoiseBasedAquifer(NoiseChunk chunkNoiseSampler, ChunkPos chunkPos, NoiseRouter noiseRouter, PositionalRandomFactory randomSplitter, int minimumY, int height, Aquifer.FluidPicker fluidLevelSampler) {
++        private static final int[][] SURFACE_SAMPLING_OFFSETS_IN_CHUNKS =
++                new int[][] {
++                    {0, 0}, {-2, -1}, {-1, -1}, {0, -1}, {1, -1}, {-3, 0}, {-2, 0}, {-1, 0}, {1, 0},
++                    {-2, 1}, {-1, 1}, {0, 1}, {1, 1}
++                };
++
++        private final long nativePtr;
++
++        NoiseBasedAquifer(
++                NoiseChunk chunkNoiseSampler,
++                ChunkPos chunkPos,
++                NoiseRouter noiseRouter,
++                PositionalRandomFactory randomSplitter,
++                int minimumY,
++                int height,
++                Aquifer.FluidPicker fluidLevelSampler) {
+             this.noiseChunk = chunkNoiseSampler;
+             this.barrierNoise = noiseRouter.barrierNoise();
+             this.fluidLevelFloodednessNoise = noiseRouter.fluidLevelFloodednessNoise();
+@@ -108,10 +148,55 @@ public interface Aquifer {
+             this.gridSizeZ = l - this.minGridZ + 1;
+             int m = this.gridSizeX * k * this.gridSizeZ;
+             this.aquiferCache = new Aquifer.FluidStatus[m];
+-            this.aquiferLocationCache = new long[m];
+-            Arrays.fill(this.aquiferLocationCache, Long.MAX_VALUE);
++            // this.aquiferLocationCache = new long[m];
++            // Arrays.fill(this.aquiferLocationCache, Long.MAX_VALUE);
++            if (this.positionalRandomFactory.getNativePtr() == 0) {
++                throw new IllegalStateException(
++                        "Aquifer requires a native positional random factory");
++            }
++            if (barrierNoise.getClass() != Noise.class) {
++                throw new IllegalStateException("barrierNoise.getClass() != Noise.class");
++            }
++            if (fluidLevelSampler.getClass() != FluidPickerFromNoiseChunk.class) {
++                throw new IllegalStateException(
++                        "fluidLevelSampler.getClass() != FluidPickerFromNoiseChunk.class");
++            }
++            this.nativePtr =
++                    nativeNew(
++                            this.minGridX,
++                            this.minGridY,
++                            this.minGridZ,
++                            this.gridSizeX,
++                            this.gridSizeZ,
++                            (Noise) barrierNoise,
++                            this.positionalRandomFactory.getNativePtr(),
++                            ((FluidPickerFromNoiseChunk) fluidLevelSampler).getNativePtr(),
++                            minimumY,
++                            height);
++            long ptr = this.nativePtr;
++            Glue.getCleaner()
++                    .register(
++                            this,
++                            () -> {
++                                nativeDelete(ptr);
++                            });
++            // System.out.println("barrierNoise class: " + this.barrierNoise.getClass().getName());
+         }
+ 
++        private static native long nativeNew(
++                int minGridX,
++                int minGridY,
++                int minGridZ,
++                int gridSizeX,
++                int gridSizeZ,
++                Noise barrierNoise,
++                long positionalRandomFactoryPtr,
++                long fluidPickerPtr,
++                int minimumY,
++                int height);
++
++        private static native void nativeDelete(long ptr);
++
+         private int getIndex(int x, int y, int z) {
+             int i = x - this.minGridX;
+             int j = y - this.minGridY;
+@@ -119,183 +204,220 @@ public interface Aquifer {
+             return (j * this.gridSizeZ + k) * this.gridSizeX + i;
+         }
+ 
++        static {
++            System.loadLibrary("mclib");
++            setup();
++        }
++
++        private static native void setup();
++
+         @Nullable
+         @Override
+         public BlockState computeSubstance(DensityFunction.FunctionContext pos, double density) {
+-            int i = pos.blockX();
+-            int j = pos.blockY();
+-            int k = pos.blockZ();
+-            if (density > 0.0D) {
+-                this.shouldScheduleFluidUpdate = false;
+-                return null;
+-            } else {
+-                Aquifer.FluidStatus fluidStatus = this.globalFluidPicker.computeFluid(i, j, k);
+-                if (fluidStatus.at(j).is(Blocks.LAVA)) {
+-                    this.shouldScheduleFluidUpdate = false;
+-                    return Blocks.LAVA.defaultBlockState();
+-                } else {
+-                    int l = Math.floorDiv(i - 5, 16);
+-                    int m = Math.floorDiv(j + 1, 12);
+-                    int n = Math.floorDiv(k - 5, 16);
+-                    int o = Integer.MAX_VALUE;
+-                    int p = Integer.MAX_VALUE;
+-                    int q = Integer.MAX_VALUE;
+-                    long r = 0L;
+-                    long s = 0L;
+-                    long t = 0L;
+-
+-                    for(int u = 0; u <= 1; ++u) {
+-                        for(int v = -1; v <= 1; ++v) {
+-                            for(int w = 0; w <= 1; ++w) {
+-                                int x = l + u;
+-                                int y = m + v;
+-                                int z = n + w;
+-                                int aa = this.getIndex(x, y, z);
+-                                long ab = this.aquiferLocationCache[aa];
+-                                long ac;
+-                                if (ab != Long.MAX_VALUE) {
+-                                    ac = ab;
+-                                } else {
+-                                    RandomSource randomSource = this.positionalRandomFactory.at(x, y, z);
+-                                    ac = BlockPos.asLong(x * 16 + randomSource.nextInt(10), y * 12 + randomSource.nextInt(9), z * 16 + randomSource.nextInt(10));
+-                                    this.aquiferLocationCache[aa] = ac;
+-                                }
+-
+-                                int ae = BlockPos.getX(ac) - i;
+-                                int af = BlockPos.getY(ac) - j;
+-                                int ag = BlockPos.getZ(ac) - k;
+-                                int ah = ae * ae + af * af + ag * ag;
+-                                if (o >= ah) {
+-                                    t = s;
+-                                    s = r;
+-                                    r = ac;
+-                                    q = p;
+-                                    p = o;
+-                                    o = ah;
+-                                } else if (p >= ah) {
+-                                    t = s;
+-                                    s = ac;
+-                                    q = p;
+-                                    p = ah;
+-                                } else if (q >= ah) {
+-                                    t = ac;
+-                                    q = ah;
+-                                }
+-                            }
+-                        }
+-                    }
+-
+-                    Aquifer.FluidStatus fluidStatus2 = this.getAquiferStatus(r);
+-                    double d = similarity(o, p);
+-                    BlockState blockState = fluidStatus2.at(j);
+-                    if (d <= 0.0D) {
+-                        this.shouldScheduleFluidUpdate = d >= FLOWING_UPDATE_SIMULARITY;
+-                        return blockState;
+-                    } else if (blockState.is(Blocks.WATER) && this.globalFluidPicker.computeFluid(i, j - 1, k).at(j - 1).is(Blocks.LAVA)) {
+-                        this.shouldScheduleFluidUpdate = true;
+-                        return blockState;
+-                    } else {
+-                        MutableDouble mutableDouble = new MutableDouble(Double.NaN);
+-                        Aquifer.FluidStatus fluidStatus3 = this.getAquiferStatus(s);
+-                        double e = d * this.calculatePressure(pos, mutableDouble, fluidStatus2, fluidStatus3);
+-                        if (density + e > 0.0D) {
+-                            this.shouldScheduleFluidUpdate = false;
+-                            return null;
+-                        } else {
+-                            Aquifer.FluidStatus fluidStatus4 = this.getAquiferStatus(t);
+-                            double f = similarity(o, q);
+-                            if (f > 0.0D) {
+-                                double g = d * f * this.calculatePressure(pos, mutableDouble, fluidStatus2, fluidStatus4);
+-                                if (density + g > 0.0D) {
+-                                    this.shouldScheduleFluidUpdate = false;
+-                                    return null;
+-                                }
+-                            }
+-
+-                            double h = similarity(p, q);
+-                            if (h > 0.0D) {
+-                                double ai = d * h * this.calculatePressure(pos, mutableDouble, fluidStatus3, fluidStatus4);
+-                                if (density + ai > 0.0D) {
+-                                    this.shouldScheduleFluidUpdate = false;
+-                                    return null;
+-                                }
+-                            }
+-
+-                            this.shouldScheduleFluidUpdate = true;
+-                            return blockState;
+-                        }
+-                    }
+-                }
+-            }
++            // if (pos.getNativePtr() == 0)
++            //     throw new IllegalStateException("pos.getNativePtr() == 0");
++            // System.out.printf("x: %d, y: %d, z: %d, density: %f\n", pos.blockX(), pos.blockY(),
++            // pos.blockZ(), density);
++            // System.out.println("native entry point: " + this.nativePtr);
++            var n =
++                    this.computeSubstanceNative(
++                            pos.getNativePtr(), /* pos, */ density, this.nativePtr);
++            // System.out.println("native exit point: " + this.nativePtr);
++            return n;
+         }
+ 
++        public native BlockState computeSubstanceNative(
++                long posPtr,
++                // DensityFunction.FunctionContext pos,
++                double density,
++                long nativePtr);
++
+         @Override
+         public boolean shouldScheduleFluidUpdate() {
+-            return this.shouldScheduleFluidUpdate;
++            return shouldScheduleFluidUpdateNative(this.nativePtr);
+         }
+ 
+-        private static double similarity(int i, int a) {
+-            double d = 25.0D;
+-            return 1.0D - (double)Math.abs(a - i) / 25.0D;
+-        }
+-
+-        private double calculatePressure(DensityFunction.FunctionContext pos, MutableDouble mutableDouble, Aquifer.FluidStatus fluidStatus, Aquifer.FluidStatus fluidStatus2) {
+-            int i = pos.blockY();
+-            BlockState blockState = fluidStatus.at(i);
+-            BlockState blockState2 = fluidStatus2.at(i);
+-            if ((!blockState.is(Blocks.LAVA) || !blockState2.is(Blocks.WATER)) && (!blockState.is(Blocks.WATER) || !blockState2.is(Blocks.LAVA))) {
+-                int j = Math.abs(fluidStatus.fluidLevel - fluidStatus2.fluidLevel);
+-                if (j == 0) {
+-                    return 0.0D;
+-                } else {
+-                    double d = 0.5D * (double)(fluidStatus.fluidLevel + fluidStatus2.fluidLevel);
+-                    double e = (double)i + 0.5D - d;
+-                    double f = (double)j / 2.0D;
+-                    double g = 0.0D;
+-                    double h = 2.5D;
+-                    double k = 1.5D;
+-                    double l = 3.0D;
+-                    double m = 10.0D;
+-                    double n = 3.0D;
+-                    double o = f - Math.abs(e);
+-                    double q;
+-                    if (e > 0.0D) {
+-                        double p = 0.0D + o;
+-                        if (p > 0.0D) {
+-                            q = p / 1.5D;
+-                        } else {
+-                            q = p / 2.5D;
+-                        }
+-                    } else {
+-                        double s = 3.0D + o;
+-                        if (s > 0.0D) {
+-                            q = s / 3.0D;
+-                        } else {
+-                            q = s / 10.0D;
+-                        }
+-                    }
+-
+-                    double v = 2.0D;
+-                    double z;
+-                    if (!(q < -2.0D) && !(q > 2.0D)) {
+-                        double x = mutableDouble.getValue();
+-                        if (Double.isNaN(x)) {
+-                            double y = this.barrierNoise.compute(pos);
+-                            mutableDouble.setValue(y);
+-                            z = y;
+-                        } else {
+-                            z = x;
+-                        }
+-                    } else {
+-                        z = 0.0D;
+-                    }
+-
+-                    return 2.0D * (z + q);
+-                }
+-            } else {
+-                return 2.0D;
+-            }
+-        }
++        private static native boolean shouldScheduleFluidUpdateNative(long nativePtr);
++
++        // @Nullable
++        // private BlockState computeSubstanceOld(DensityFunction.FunctionContext pos, double
++        // density) {
++        //     int i = pos.blockX();
++        //     int j = pos.blockY();
++        //     int k = pos.blockZ();
++        //     if (density > 0.0D) {
++        //         this.shouldScheduleFluidUpdate = false;
++        //         return null;
++        //     } else {
++        //         Aquifer.FluidStatus fluidStatus = this.globalFluidPicker.computeFluid(i, j, k);
++        //         if (fluidStatus.at(j).is(Blocks.LAVA)) {
++        //             this.shouldScheduleFluidUpdate = false;
++        //             return Blocks.LAVA.defaultBlockState();
++        //         } else {
++        //             int l = Math.floorDiv(i - 5, 16);
++        //             int m = Math.floorDiv(j + 1, 12);
++        //             int n = Math.floorDiv(k - 5, 16);
++        //             int o = Integer.MAX_VALUE;
++        //             int p = Integer.MAX_VALUE;
++        //             int q = Integer.MAX_VALUE;
++        //             long r = 0L;
++        //             long s = 0L;
++        //             long t = 0L;
++        //
++        //             for(int u = 0; u <= 1; ++u) {
++        //                 for(int v = -1; v <= 1; ++v) {
++        //                     for(int w = 0; w <= 1; ++w) {
++        //                         int x = l + u;
++        //                         int y = m + v;
++        //                         int z = n + w;
++        //                         int aa = this.getIndex(x, y, z);
++        //                         long ab = this.aquiferLocationCache[aa];
++        //                         long ac;
++        //                         if (ab != Long.MAX_VALUE) {
++        //                             ac = ab;
++        //                         } else {
++        //                             RandomSource randomSource =
++        // this.positionalRandomFactory.at(x, y, z);
++        //                             ac = BlockPos.asLong(x * 16 + randomSource.nextInt(10), y *
++        // 12 + randomSource.nextInt(9), z * 16 + randomSource.nextInt(10));
++        //                             this.aquiferLocationCache[aa] = ac;
++        //                         }
++        //
++        //                         int ae = BlockPos.getX(ac) - i;
++        //                         int af = BlockPos.getY(ac) - j;
++        //                         int ag = BlockPos.getZ(ac) - k;
++        //                         int ah = ae * ae + af * af + ag * ag;
++        //                         if (o >= ah) {
++        //                             t = s;
++        //                             s = r;
++        //                             r = ac;
++        //                             q = p;
++        //                             p = o;
++        //                             o = ah;
++        //                         } else if (p >= ah) {
++        //                             t = s;
++        //                             s = ac;
++        //                             q = p;
++        //                             p = ah;
++        //                         } else if (q >= ah) {
++        //                             t = ac;
++        //                             q = ah;
++        //                         }
++        //                     }
++        //                 }
++        //             }
++        //
++        //             Aquifer.FluidStatus fluidStatus2 = this.getAquiferStatus(r);
++        //             double d = similarity(o, p);
++        //             BlockState blockState = fluidStatus2.at(j);
++        //             if (d <= 0.0D) {
++        //                 this.shouldScheduleFluidUpdate = d >= FLOWING_UPDATE_SIMULARITY;
++        //                 return blockState;
++        //             } else if (blockState.is(Blocks.WATER) &&
++        // this.globalFluidPicker.computeFluid(i, j - 1, k).at(j - 1).is(Blocks.LAVA)) {
++        //                 this.shouldScheduleFluidUpdate = true;
++        //                 return blockState;
++        //             } else {
++        //                 MutableDouble mutableDouble = new MutableDouble(Double.NaN);
++        //                 Aquifer.FluidStatus fluidStatus3 = this.getAquiferStatus(s);
++        //                 double e = d * this.calculatePressure(pos, mutableDouble, fluidStatus2,
++        // fluidStatus3);
++        //                 if (density + e > 0.0D) {
++        //                     this.shouldScheduleFluidUpdate = false;
++        //                     return null;
++        //                 } else {
++        //                     Aquifer.FluidStatus fluidStatus4 = this.getAquiferStatus(t);
++        //                     double f = similarity(o, q);
++        //                     if (f > 0.0D) {
++        //                         double g = d * f * this.calculatePressure(pos, mutableDouble,
++        // fluidStatus2, fluidStatus4);
++        //                         if (density + g > 0.0D) {
++        //                             this.shouldScheduleFluidUpdate = false;
++        //                             return null;
++        //                         }
++        //                     }
++        //
++        //                     double h = similarity(p, q);
++        //                     if (h > 0.0D) {
++        //                         double ai = d * h * this.calculatePressure(pos, mutableDouble,
++        // fluidStatus3, fluidStatus4);
++        //                         if (density + ai > 0.0D) {
++        //                             this.shouldScheduleFluidUpdate = false;
++        //                             return null;
++        //                         }
++        //                     }
++        //
++        //                     this.shouldScheduleFluidUpdate = true;
++        //                     return blockState;
++        //                 }
++        //             }
++        //         }
++        //     }
++        // }
++        // private static double similarity(int i, int a) {
++        //     double d = 25.0D;
++        //     return 1.0D - (double)Math.abs(a - i) / 25.0D;
++        // }
++
++        // private double calculatePressure(DensityFunction.FunctionContext pos, MutableDouble
++        // mutableDouble, Aquifer.FluidStatus fluidStatus, Aquifer.FluidStatus fluidStatus2) {
++        //     int i = pos.blockY();
++        //     BlockState blockState = fluidStatus.at(i);
++        //     BlockState blockState2 = fluidStatus2.at(i);
++        //     if ((!blockState.is(Blocks.LAVA) || !blockState2.is(Blocks.WATER)) &&
++        // (!blockState.is(Blocks.WATER) || !blockState2.is(Blocks.LAVA))) {
++        //         int j = Math.abs(fluidStatus.fluidLevel - fluidStatus2.fluidLevel);
++        //         if (j == 0) {
++        //             return 0.0D;
++        //         } else {
++        //             double d = 0.5D * (double)(fluidStatus.fluidLevel + fluidStatus2.fluidLevel);
++        //             double e = (double)i + 0.5D - d;
++        //             double f = (double)j / 2.0D;
++        //             double g = 0.0D;
++        //             double h = 2.5D;
++        //             double k = 1.5D;
++        //             double l = 3.0D;
++        //             double m = 10.0D;
++        //             double n = 3.0D;
++        //             double o = f - Math.abs(e);
++        //             double q;
++        //             if (e > 0.0D) {
++        //                 double p = 0.0D + o;
++        //                 if (p > 0.0D) {
++        //                     q = p / 1.5D;
++        //                 } else {
++        //                     q = p / 2.5D;
++        //                 }
++        //             } else {
++        //                 double s = 3.0D + o;
++        //                 if (s > 0.0D) {
++        //                     q = s / 3.0D;
++        //                 } else {
++        //                     q = s / 10.0D;
++        //                 }
++        //             }
++        //
++        //             double v = 2.0D;
++        //             double z;
++        //             if (!(q < -2.0D) && !(q > 2.0D)) {
++        //                 double x = mutableDouble.getValue();
++        //                 if (Double.isNaN(x)) {
++        //                     double y = this.barrierNoise.compute(pos);
++        //                     mutableDouble.setValue(y);
++        //                     z = y;
++        //                 } else {
++        //                     z = x;
++        //                 }
++        //             } else {
++        //                 z = 0.0D;
++        //             }
++        //
++        //             return 2.0D * (z + q);
++        //         }
++        //     } else {
++        //         return 2.0D;
++        //     }
++        // }
+ 
+         private int gridX(int x) {
+             return Math.floorDiv(x, 16);
+@@ -328,13 +450,14 @@ public interface Aquifer {
+         }
+ 
+         private Aquifer.FluidStatus computeFluid(int blockX, int blockY, int blockZ) {
+-            Aquifer.FluidStatus fluidStatus = this.globalFluidPicker.computeFluid(blockX, blockY, blockZ);
++            Aquifer.FluidStatus fluidStatus =
++                    this.globalFluidPicker.computeFluid(blockX, blockY, blockZ);
+             int i = Integer.MAX_VALUE;
+             int j = blockY + 12;
+             int k = blockY - 12;
+             boolean bl = false;
+ 
+-            for(int[] is : SURFACE_SAMPLING_OFFSETS_IN_CHUNKS) {
++            for (int[] is : SURFACE_SAMPLING_OFFSETS_IN_CHUNKS) {
+                 int l = blockX + SectionPos.sectionToBlockCoord(is[0]);
+                 int m = blockZ + SectionPos.sectionToBlockCoord(is[1]);
+                 int n = this.noiseChunk.preliminarySurfaceLevel(l, m);
+@@ -362,21 +485,34 @@ public interface Aquifer {
+             }
+ 
+             int p = this.computeSurfaceLevel(blockX, blockY, blockZ, fluidStatus, i, bl);
+-            return new Aquifer.FluidStatus(p, this.computeFluidType(blockX, blockY, blockZ, fluidStatus, p));
++            return new Aquifer.FluidStatus(
++                    p, this.computeFluidType(blockX, blockY, blockZ, fluidStatus, p));
+         }
+ 
+-        private int computeSurfaceLevel(int blockX, int blockY, int blockZ, Aquifer.FluidStatus defaultFluidLevel, int surfaceHeightEstimate, boolean bl) {
+-            DensityFunction.SinglePointContext singlePointContext = new DensityFunction.SinglePointContext(blockX, blockY, blockZ);
++        private int computeSurfaceLevel(
++                int blockX,
++                int blockY,
++                int blockZ,
++                Aquifer.FluidStatus defaultFluidLevel,
++                int surfaceHeightEstimate,
++                boolean bl) {
++            DensityFunction.SinglePointContext singlePointContext =
++                    new DensityFunction.SinglePointContext(blockX, blockY, blockZ);
+             double d;
+             double e;
+-            if (OverworldBiomeBuilder.isDeepDarkRegion(this.erosion, this.depth, singlePointContext)) {
++            if (OverworldBiomeBuilder.isDeepDarkRegion(
++                    this.erosion, this.depth, singlePointContext)) {
+                 d = -1.0D;
+                 e = -1.0D;
+             } else {
+                 int i = surfaceHeightEstimate + 8 - blockY;
+                 int j = 64;
+-                double f = bl ? Mth.clampedMap((double)i, 0.0D, 64.0D, 1.0D, 0.0D) : 0.0D;
+-                double g = Mth.clamp(this.fluidLevelFloodednessNoise.compute(singlePointContext), -1.0D, 1.0D);
++                double f = bl ? Mth.clampedMap((double) i, 0.0D, 64.0D, 1.0D, 0.0D) : 0.0D;
++                double g =
++                        Mth.clamp(
++                                this.fluidLevelFloodednessNoise.compute(singlePointContext),
++                                -1.0D,
++                                1.0D);
+                 double h = Mth.map(f, 1.0D, 0.0D, -0.3D, 0.8D);
+                 double k = Mth.map(f, 1.0D, 0.0D, -0.8D, 0.4D);
+                 d = g - k;
+@@ -387,7 +523,9 @@ public interface Aquifer {
+             if (e > 0.0D) {
+                 n = defaultFluidLevel.fluidLevel;
+             } else if (d > 0.0D) {
+-                n = this.computeRandomizedFluidSurfaceLevel(blockX, blockY, blockZ, surfaceHeightEstimate);
++                n =
++                        this.computeRandomizedFluidSurfaceLevel(
++                                blockX, blockY, blockZ, surfaceHeightEstimate);
+             } else {
+                 n = DimensionType.WAY_BELOW_MIN_Y;
+             }
+@@ -395,7 +533,8 @@ public interface Aquifer {
+             return n;
+         }
+ 
+-        private int computeRandomizedFluidSurfaceLevel(int blockX, int blockY, int blockZ, int surfaceHeightEstimate) {
++        private int computeRandomizedFluidSurfaceLevel(
++                int blockX, int blockY, int blockZ, int surfaceHeightEstimate) {
+             int i = 16;
+             int j = 40;
+             int k = Math.floorDiv(blockX, 16);
+@@ -403,15 +542,25 @@ public interface Aquifer {
+             int m = Math.floorDiv(blockZ, 16);
+             int n = l * 40 + 20;
+             int o = 10;
+-            double d = this.fluidLevelSpreadNoise.compute(new DensityFunction.SinglePointContext(k, l, m)) * 10.0D;
++            double d =
++                    this.fluidLevelSpreadNoise.compute(
++                                    new DensityFunction.SinglePointContext(k, l, m))
++                            * 10.0D;
+             int p = Mth.quantize(d, 3);
+             int q = n + p;
+             return Math.min(surfaceHeightEstimate, q);
+         }
+ 
+-        private BlockState computeFluidType(int blockX, int blockY, int blockZ, Aquifer.FluidStatus defaultFluidLevel, int fluidLevel) {
++        private BlockState computeFluidType(
++                int blockX,
++                int blockY,
++                int blockZ,
++                Aquifer.FluidStatus defaultFluidLevel,
++                int fluidLevel) {
+             BlockState blockState = defaultFluidLevel.fluidType;
+-            if (fluidLevel <= -10 && fluidLevel != DimensionType.WAY_BELOW_MIN_Y && defaultFluidLevel.fluidType != Blocks.LAVA.defaultBlockState()) {
++            if (fluidLevel <= -10
++                    && fluidLevel != DimensionType.WAY_BELOW_MIN_Y
++                    && defaultFluidLevel.fluidType != Blocks.LAVA.defaultBlockState()) {
+                 int i = 64;
+                 int j = 40;
+                 int k = Math.floorDiv(blockX, 64);
+diff --git a/src/main/java/net/minecraft/world/level/levelgen/DensityFunction.java b/src/main/java/net/minecraft/world/level/levelgen/DensityFunction.java
+index f0d1f0f1071bcfb6afa67115e244b96f6384b05d..626533b231472109e8e0a388ffeb37eeb8b8b378 100644
+--- a/src/main/java/net/minecraft/world/level/levelgen/DensityFunction.java
++++ b/src/main/java/net/minecraft/world/level/levelgen/DensityFunction.java
+@@ -1,6 +1,9 @@
+ package net.minecraft.world.level.levelgen;
+ 
+ import com.mojang.serialization.Codec;
++
++import io.rustmc.Glue;
++
+ import javax.annotation.Nullable;
+ import net.minecraft.core.Holder;
+ import net.minecraft.core.registries.Registries;
+@@ -76,6 +79,10 @@ public interface DensityFunction {
+         default Blender getBlender() {
+             return Blender.empty();
+         }
++
++        default long getNativePtr() {
++            return 0L;
++        }
+     }
+ 
+     public static record NoiseHolder(Holder<NormalNoise.NoiseParameters> noiseData, @Nullable NormalNoise noise) {
+@@ -108,7 +115,54 @@ public interface DensityFunction {
+         }
+     }
+ 
+-    public static record SinglePointContext(int blockX, int blockY, int blockZ) implements DensityFunction.FunctionContext {
++    // public static record SinglePointContext(int blockX, int blockY, int blockZ) implements DensityFunction.FunctionContext {
++    // }
++
++    public static class SinglePointContext implements DensityFunction.FunctionContext {
++        // private final int blockX;
++        // private final int blockY;
++        // private final int blockZ;
++        private final long nativePtr;
++
++        public SinglePointContext(int blockX, int blockY, int blockZ) {
++            // this.blockX = blockX;
++            // this.blockY = blockY;
++            // this.blockZ = blockZ;
++            this.nativePtr = nativeNew(blockX, blockY, blockZ);
++            long ptr = this.nativePtr;
++            Glue.getCleaner().register(this, () -> nativeDelete(ptr));
++        }
++
++        static {
++            System.loadLibrary("mclib");
++        }
++
++        private static native long nativeNew(int blockX, int blockY, int blockZ);
++        private static native void nativeDelete(long nativePtr);
++
++        private static native int nativeBlockX(long nativePtr);
++        private static native int nativeBlockY(long nativePtr);
++        private static native int nativeBlockZ(long nativePtr);
++
++        @Override
++        public long getNativePtr() {
++            return this.nativePtr;
++        }
++
++        @Override
++        public int blockX() {
++            return nativeBlockX(this.nativePtr);
++        }
++
++        @Override
++        public int blockY() {
++            return nativeBlockY(this.nativePtr);
++        }
++
++        @Override
++        public int blockZ() {
++            return nativeBlockZ(this.nativePtr);
++        }
+     }
+ 
+     public interface Visitor {
+diff --git a/src/main/java/net/minecraft/world/level/levelgen/LegacyRandomSource.java b/src/main/java/net/minecraft/world/level/levelgen/LegacyRandomSource.java
+index daa03360dd7044f10b20f36023b305dc7e0bb7df..fa8d24ccfe8c83e5460b914b0067b8e0f817744b 100644
+--- a/src/main/java/net/minecraft/world/level/levelgen/LegacyRandomSource.java
++++ b/src/main/java/net/minecraft/world/level/levelgen/LegacyRandomSource.java
+@@ -1,6 +1,9 @@
+ package net.minecraft.world.level.levelgen;
+ 
+ import com.google.common.annotations.VisibleForTesting;
++
++import io.rustmc.Glue;
++
+ import java.util.concurrent.atomic.AtomicLong;
+ import net.minecraft.util.Mth;
+ import net.minecraft.util.RandomSource;
+@@ -18,6 +21,10 @@ public class LegacyRandomSource implements BitRandomSource {
+         this.setSeed(seed);
+     }
+ 
++    static {
++        System.loadLibrary("mclib");
++    }
++
+     @Override
+     public RandomSource fork() {
+         return new LegacyRandomSource(this.nextLong());
+@@ -55,9 +62,21 @@ public class LegacyRandomSource implements BitRandomSource {
+ 
+     public static class LegacyPositionalRandomFactory implements PositionalRandomFactory {
+         private final long seed;
++        private final long nativePtr;
+ 
+         public LegacyPositionalRandomFactory(long seed) {
+             this.seed = seed;
++            this.nativePtr = nativeNew(seed);
++            long ptr = this.nativePtr;
++            Glue.getCleaner().register(this, () -> nativeDelete(ptr));
++        }
++
++        private native static long nativeNew(long seed);
++        private native static void nativeDelete(long nativePtr);
++
++        @Override
++        public long getNativePtr() {
++            return this.nativePtr;
+         }
+ 
+         @Override
+diff --git a/src/main/java/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java b/src/main/java/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java
+index 58609a0911c4e32b6f80f050cd3d23f70ad75b1b..f695f9a424fc608b445ccb2a8552a3d2fe7911e2 100644
+--- a/src/main/java/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java
++++ b/src/main/java/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java
+@@ -6,6 +6,9 @@ import com.google.common.base.Suppliers;
+ import com.google.common.collect.Sets;
+ import com.mojang.serialization.Codec;
+ import com.mojang.serialization.codecs.RecordCodecBuilder;
++
++import io.rustmc.Glue;
++
+ import java.text.DecimalFormat;
+ import java.util.Iterator;
+ import java.util.List;
+@@ -45,6 +48,7 @@ import net.minecraft.world.level.chunk.ChunkGenerator;
+ import net.minecraft.world.level.chunk.LevelChunkSection;
+ import net.minecraft.world.level.chunk.ProtoChunk;
+ import net.minecraft.world.level.dimension.DimensionType;
++import net.minecraft.world.level.levelgen.Aquifer.FluidStatus;
+ import net.minecraft.world.level.levelgen.blending.Blender;
+ import net.minecraft.world.level.levelgen.carver.CarvingContext;
+ import net.minecraft.world.level.levelgen.carver.ConfiguredWorldCarver;
+@@ -71,16 +75,73 @@ public final class NoiseBasedChunkGenerator extends ChunkGenerator {
+         });
+     }
+ 
++    // rustmc start
++    public static class FluidPickerFromNoiseChunk implements Aquifer.FluidPicker {
++        private final long nativePtr;
++
++        private final FluidStatus aquifer_b;
++        private final FluidStatus aquifer_b1;
++        private final int i;
++
++        private FluidPickerFromNoiseChunk(
++                int aquifer_b_y,
++                BlockState aquifer_b_blockstate,
++                int aquifer_b1_y,
++                BlockState aquifer_b1_blockstate,
++                int i) {
++            this.nativePtr = newNative(aquifer_b_y, aquifer_b_blockstate, aquifer_b_blockstate.isAir(), aquifer_b1_y, aquifer_b1_blockstate, aquifer_b1_blockstate.isAir(), i);
++            long ptr = this.nativePtr;
++            Glue.getCleaner().register(this, () -> deleteNative(ptr));
++            aquifer_b = new FluidStatus(aquifer_b_y, aquifer_b_blockstate);
++            aquifer_b1 = new FluidStatus(aquifer_b1_y, aquifer_b1_blockstate);
++            this.i = i;
++        }
++
++        @Override
++        public FluidStatus computeFluid(int x, int y, int z) {
++            if (y < Math.min(-54, i)) {
++                return aquifer_b;
++            } else {
++                return aquifer_b1;
++            }
++        }
++
++        public BlockState computeFluidAt(int x, int y, int z, int y1) {
++            return computeFluidAtNative(this.nativePtr, x, y, z, y1);
++            // return computeFluid(x, y, z).at(y1);
++        }
++
++        public long getNativePtr() {
++            return this.nativePtr;
++        }
++
++        private native long newNative(
++            int aquifer_b_y,
++            BlockState aquifer_b_blockstate,
++            boolean aquifer_b_is_air,
++            int aquifer_b1_y,
++            BlockState aquifer_b1_blockstate,
++            boolean aquifer_b1_is_air,
++            int i);
++        private native void deleteNative(long nativePtr);
++        private native BlockState computeFluidAtNative(long nativePtr, int x, int y, int z, int y1);
++    }
++
++    // private static Aquifer.FluidPicker createFluidPicker(NoiseGeneratorSettings settings) {
++    //     Aquifer.FluidStatus aquifer_b = new Aquifer.FluidStatus(-54, Blocks.LAVA.defaultBlockState());
++    //     int i = settings.seaLevel();
++    //     Aquifer.FluidStatus aquifer_b1 = new Aquifer.FluidStatus(i, settings.defaultFluid());
++    //     Aquifer.FluidStatus aquifer_b2 = new Aquifer.FluidStatus(DimensionType.MIN_Y * 2, Blocks.AIR.defaultBlockState());
++    //
++    //     return (j, k, l) -> {
++    //         return k < Math.min(-54, i) ? aquifer_b : aquifer_b1;
++    //     };
++    // }
+     private static Aquifer.FluidPicker createFluidPicker(NoiseGeneratorSettings settings) {
+-        Aquifer.FluidStatus aquifer_b = new Aquifer.FluidStatus(-54, Blocks.LAVA.defaultBlockState());
+         int i = settings.seaLevel();
+-        Aquifer.FluidStatus aquifer_b1 = new Aquifer.FluidStatus(i, settings.defaultFluid());
+-        Aquifer.FluidStatus aquifer_b2 = new Aquifer.FluidStatus(DimensionType.MIN_Y * 2, Blocks.AIR.defaultBlockState());
+-
+-        return (j, k, l) -> {
+-            return k < Math.min(-54, i) ? aquifer_b : aquifer_b1;
+-        };
++        return new FluidPickerFromNoiseChunk(-54, Blocks.LAVA.defaultBlockState(), i, settings.defaultFluid(), i);
+     }
++    // rustmc end
+ 
+     @Override
+     public CompletableFuture<ChunkAccess> createBiomes(Executor executor, RandomState noiseConfig, Blender blender, StructureManager structureAccessor, ChunkAccess chunk) {
+diff --git a/src/main/java/net/minecraft/world/level/levelgen/NoiseChunk.java b/src/main/java/net/minecraft/world/level/levelgen/NoiseChunk.java
+index ba140307f73a7ba3c4ae1e85007fd4d8049ca6f5..55504faba89f576430a299d5706fa0c219470f28 100644
+--- a/src/main/java/net/minecraft/world/level/levelgen/NoiseChunk.java
++++ b/src/main/java/net/minecraft/world/level/levelgen/NoiseChunk.java
+@@ -2,6 +2,8 @@ package net.minecraft.world.level.levelgen;
+ 
+ import com.google.common.collect.ImmutableList;
+ import com.google.common.collect.Lists;
++
++import io.rustmc.Glue;
+ import it.unimi.dsi.fastutil.longs.Long2IntMap;
+ import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+ import java.util.HashMap;
+@@ -32,7 +34,7 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+     final List<NoiseChunk.NoiseInterpolator> interpolators;
+     final List<NoiseChunk.CacheAllInCell> cellCaches;
+     private final Map<DensityFunction, DensityFunction> wrapped = new HashMap<>();
+-    private final Long2IntMap preliminarySurfaceLevel = new Long2IntOpenHashMap();
++    // private final Long2IntMap preliminarySurfaceLevel = new Long2IntOpenHashMap();
+     private final Aquifer aquifer;
+     private final DensityFunction initialDensityNoJaggedness;
+     private final NoiseChunk.BlockStateFiller blockStateRule;
+@@ -47,21 +49,59 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+     final int cellHeight;
+     boolean interpolating;
+     boolean fillingCell;
+-    private int cellStartBlockX;
+-    int cellStartBlockY;
+-    private int cellStartBlockZ;
+-    int inCellX;
+-    int inCellY;
+-    int inCellZ;
++    // private int cellStartBlockX;
++    // int cellStartBlockY;
++    // private int cellStartBlockZ;
++    // int inCellX;
++    // int inCellY;
++    // int inCellZ;
+     long interpolationCounter;
+     long arrayInterpolationCounter;
+     int arrayIndex;
++    // rust-mc - start
++    private final long nativePtr;
++    static {
++        System.loadLibrary("mclib");
++    }
++
++    private native long nativeNew(
++            int cellStartBlockY,
++            int cellStartBlockX,
++            int cellStartBlockZ,
++            int inCellX,
++            int inCellY,
++            int inCellZ
++            );
++    private static native void nativeDelete(long nativePtr);
++
++    private static native void nativeSetCellStartBlockY(long nativePtr, int val);
++    private static native void nativeSetCellStartBlockX(long nativePtr, int val);
++    private static native void nativeSetCellStartBlockZ(long nativePtr, int val);
++    private static native void nativeSetInCellX(long nativePtr, int val);
++    private static native void nativeSetInCellY(long nativePtr, int val);
++    private static native void nativeSetInCellZ(long nativePtr, int val);
++    
++    private static native int nativeGetCellStartBlockY(long nativePtr);
++    private static native int nativeGetCellStartBlockX(long nativePtr);
++    private static native int nativeGetCellStartBlockZ(long nativePtr);
++    private static native int nativeGetInCellX(long nativePtr);
++    private static native int nativeGetInCellY(long nativePtr);
++    private static native int nativeGetInCellZ(long nativePtr);
++
++    @Override
++    public long getNativePtr() {
++        return this.nativePtr;
++    }
++    // rust-mc - end
++
+     private final DensityFunction.ContextProvider sliceFillingContextProvider = new DensityFunction.ContextProvider() {
+         @Override
+         public DensityFunction.FunctionContext forIndex(int index) {
+-            NoiseChunk.this.cellStartBlockY = (index + NoiseChunk.this.cellNoiseMinY) * NoiseChunk.this.cellHeight;
++            // NoiseChunk.this.cellStartBlockY = (index + NoiseChunk.this.cellNoiseMinY) * NoiseChunk.this.cellHeight;
++            nativeSetCellStartBlockY(NoiseChunk.this.nativePtr, (index + NoiseChunk.this.cellNoiseMinY) * NoiseChunk.this.cellHeight);
+             ++NoiseChunk.this.interpolationCounter;
+-            NoiseChunk.this.inCellY = 0;
++            // NoiseChunk.this.inCellY = 0;
++            nativeSetInCellY(NoiseChunk.this.nativePtr, 0);
+             NoiseChunk.this.arrayIndex = index;
+             return NoiseChunk.this;
+         }
+@@ -69,9 +109,11 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+         @Override
+         public void fillAllDirectly(double[] densities, DensityFunction densityFunction) {
+             for(int i = 0; i < NoiseChunk.this.cellCountY + 1; ++i) {
+-                NoiseChunk.this.cellStartBlockY = (i + NoiseChunk.this.cellNoiseMinY) * NoiseChunk.this.cellHeight;
++                // NoiseChunk.this.cellStartBlockY = (i + NoiseChunk.this.cellNoiseMinY) * NoiseChunk.this.cellHeight;
++                nativeSetCellStartBlockY(NoiseChunk.this.nativePtr, (i + NoiseChunk.this.cellNoiseMinY) * NoiseChunk.this.cellHeight);
+                 ++NoiseChunk.this.interpolationCounter;
+-                NoiseChunk.this.inCellY = 0;
++                // NoiseChunk.this.inCellY = 0;
++                nativeSetInCellY(NoiseChunk.this.nativePtr, 0);
+                 NoiseChunk.this.arrayIndex = i;
+                 densities[i] = densityFunction.compute(NoiseChunk.this);
+             }
+@@ -139,6 +181,11 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+ 
+         this.blockStateRule = new MaterialRuleList(builder.build());
+         this.initialDensityNoJaggedness = noiseRouter2.initialDensityWithoutJaggedness();
++
++        // rust-mc
++        this.nativePtr = nativeNew(0, 0, 0, 0, 0, 0);
++        long nativePtr = this.nativePtr;
++        Glue.getCleaner().register(this, () -> nativeDelete(nativePtr));
+     }
+ 
+     protected Climate.Sampler cachedClimateSampler(NoiseRouter noiseRouter, List<Climate.ParameterPoint> spawnTarget) {
+@@ -152,25 +199,32 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+ 
+     @Override
+     public int blockX() {
+-        return this.cellStartBlockX + this.inCellX;
++        return nativeBlockX(this.nativePtr);
+     }
+ 
+     @Override
+     public int blockY() {
+-        return this.cellStartBlockY + this.inCellY;
++        return nativeBlockY(this.nativePtr);
+     }
+ 
+     @Override
+     public int blockZ() {
+-        return this.cellStartBlockZ + this.inCellZ;
++        return nativeBlockZ(this.nativePtr);
+     }
+ 
++    private static native int nativeBlockX(long nativePtr);
++    private static native int nativeBlockY(long nativePtr);
++    private static native int nativeBlockZ(long nativePtr);
++
+     public int preliminarySurfaceLevel(int blockX, int blockZ) {
+-        int i = QuartPos.toBlock(QuartPos.fromBlock(blockX));
+-        int j = QuartPos.toBlock(QuartPos.fromBlock(blockZ));
+-        return this.preliminarySurfaceLevel.computeIfAbsent(ColumnPos.asLong(i, j), this::computePreliminarySurfaceLevel);
++        // int i = QuartPos.toBlock(QuartPos.fromBlock(blockX));
++        // int j = QuartPos.toBlock(QuartPos.fromBlock(blockZ));
++        // return this.preliminarySurfaceLevel.computeIfAbsent(ColumnPos.asLong(i, j), this::computePreliminarySurfaceLevel);
++        return nativePrecomputePreliminarySurfaceLevel(this.nativePtr, blockX, blockZ);
+     }
+ 
++    private static native int nativePrecomputePreliminarySurfaceLevel(long nativePtr, int blockX, int blockZ);
++
+     private int computePreliminarySurfaceLevel(long columnPos) {
+         int i = ColumnPos.getX(columnPos);
+         int j = ColumnPos.getZ(columnPos);
+@@ -191,13 +245,17 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+     }
+ 
+     private void fillSlice(boolean start, int cellX) {
+-        this.cellStartBlockX = cellX * this.cellWidth;
+-        this.inCellX = 0;
++        // this.cellStartBlockX = cellX * this.cellWidth;
++        // this.inCellX = 0;
++        nativeSetCellStartBlockX(this.nativePtr, cellX * this.cellWidth);
++        nativeSetInCellX(this.nativePtr, 0);
+ 
+         for(int i = 0; i < this.cellCountXZ + 1; ++i) {
+             int j = this.firstCellZ + i;
+-            this.cellStartBlockZ = j * this.cellWidth;
+-            this.inCellZ = 0;
++            // this.cellStartBlockZ = j * this.cellWidth;
++            // this.inCellZ = 0;
++            nativeSetCellStartBlockZ(this.nativePtr, j * this.cellWidth);
++            nativeSetInCellZ(this.nativePtr, 0);
+             ++this.arrayInterpolationCounter;
+ 
+             for(NoiseChunk.NoiseInterpolator noiseInterpolator : this.interpolators) {
+@@ -221,7 +279,8 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+ 
+     public void advanceCellX(int cellX) {
+         this.fillSlice(false, this.firstCellX + cellX + 1);
+-        this.cellStartBlockX = (this.firstCellX + cellX) * this.cellWidth;
++        // this.cellStartBlockX = (this.firstCellX + cellX) * this.cellWidth;
++        nativeSetCellStartBlockX(this.nativePtr, (this.firstCellX + cellX) * this.cellWidth);
+     }
+ 
+     @Override
+@@ -230,9 +289,12 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+         int k = Math.floorDiv(i, this.cellWidth);
+         int l = Math.floorMod(k, this.cellWidth);
+         int m = this.cellHeight - 1 - Math.floorDiv(k, this.cellWidth);
+-        this.inCellX = l;
+-        this.inCellY = m;
+-        this.inCellZ = j;
++        // this.inCellX = l;
++        // this.inCellY = m;
++        // this.inCellZ = j;
++        nativeSetInCellX(this.nativePtr, l);
++        nativeSetInCellY(this.nativePtr, m);
++        nativeSetInCellZ(this.nativePtr, j);
+         this.arrayIndex = i;
+         return this;
+     }
+@@ -242,13 +304,16 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+         this.arrayIndex = 0;
+ 
+         for(int i = this.cellHeight - 1; i >= 0; --i) {
+-            this.inCellY = i;
++            // this.inCellY = i;
++            nativeSetInCellY(this.nativePtr, i);
+ 
+             for(int j = 0; j < this.cellWidth; ++j) {
+-                this.inCellX = j;
++                // this.inCellX = j;
++                nativeSetInCellX(this.nativePtr, j);
+ 
+                 for(int k = 0; k < this.cellWidth; ++k) {
+-                    this.inCellZ = k;
++                    // this.inCellZ = k;
++                    nativeSetInCellZ(this.nativePtr, k);
+                     densities[this.arrayIndex++] = densityFunction.compute(this);
+                 }
+             }
+@@ -261,8 +326,10 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+             interpolator.selectCellYZ(cellY, cellZ);
+         });
+         this.fillingCell = true;
+-        this.cellStartBlockY = (cellY + this.cellNoiseMinY) * this.cellHeight;
+-        this.cellStartBlockZ = (this.firstCellZ + cellZ) * this.cellWidth;
++        // this.cellStartBlockY = (cellY + this.cellNoiseMinY) * this.cellHeight;
++        // this.cellStartBlockZ = (this.firstCellZ + cellZ) * this.cellWidth;
++        nativeSetCellStartBlockY(this.nativePtr, (cellY + this.cellNoiseMinY) * this.cellHeight);
++        nativeSetCellStartBlockZ(this.nativePtr, (this.firstCellZ + cellZ) * this.cellWidth);
+         ++this.arrayInterpolationCounter;
+ 
+         for(NoiseChunk.CacheAllInCell cacheAllInCell : this.cellCaches) {
+@@ -274,21 +341,24 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+     }
+ 
+     public void updateForY(int blockY, double deltaY) {
+-        this.inCellY = blockY - this.cellStartBlockY;
++        // this.inCellY = blockY - this.cellStartBlockY;
++        nativeSetInCellY(this.nativePtr, blockY - nativeGetCellStartBlockY(this.nativePtr));
+         this.interpolators.forEach((interpolator) -> {
+             interpolator.updateForY(deltaY);
+         });
+     }
+ 
+     public void updateForX(int blockX, double deltaX) {
+-        this.inCellX = blockX - this.cellStartBlockX;
++        // this.inCellX = blockX - this.cellStartBlockX;
++        nativeSetInCellX(this.nativePtr, blockX - nativeGetCellStartBlockX(this.nativePtr));
+         this.interpolators.forEach((interpolator) -> {
+             interpolator.updateForX(deltaX);
+         });
+     }
+ 
+     public void updateForZ(int blockZ, double deltaZ) {
+-        this.inCellZ = blockZ - this.cellStartBlockZ;
++        // this.inCellZ = blockZ - this.cellStartBlockZ;
++        nativeSetInCellZ(this.nativePtr, blockZ - nativeGetCellStartBlockZ(this.nativePtr));
+         ++this.interpolationCounter;
+         this.interpolators.forEach((interpolator) -> {
+             interpolator.updateForZ(deltaZ);
+@@ -519,9 +589,12 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+             } else if (!NoiseChunk.this.interpolating) {
+                 throw new IllegalStateException("Trying to sample interpolator outside the interpolation loop");
+             } else {
+-                int i = NoiseChunk.this.inCellX;
+-                int j = NoiseChunk.this.inCellY;
+-                int k = NoiseChunk.this.inCellZ;
++                // int i = NoiseChunk.this.inCellX;
++                // int j = NoiseChunk.this.inCellY;
++                // int k = NoiseChunk.this.inCellZ;
++                int i = nativeGetInCellX(NoiseChunk.this.nativePtr);
++                int j = nativeGetInCellY(NoiseChunk.this.nativePtr);
++                int k = nativeGetInCellZ(NoiseChunk.this.nativePtr);
+                 return i >= 0 && j >= 0 && k >= 0 && i < NoiseChunk.this.cellWidth && j < NoiseChunk.this.cellHeight && k < NoiseChunk.this.cellWidth ? this.values[((NoiseChunk.this.cellHeight - 1 - j) * NoiseChunk.this.cellWidth + i) * NoiseChunk.this.cellWidth + k] : this.noiseFiller.compute(pos);
+             }
+         }
+@@ -732,7 +805,18 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+             } else if (!NoiseChunk.this.interpolating) {
+                 throw new IllegalStateException("Trying to sample interpolator outside the interpolation loop");
+             } else {
+-                return NoiseChunk.this.fillingCell ? Mth.lerp3((double)NoiseChunk.this.inCellX / (double)NoiseChunk.this.cellWidth, (double)NoiseChunk.this.inCellY / (double)NoiseChunk.this.cellHeight, (double)NoiseChunk.this.inCellZ / (double)NoiseChunk.this.cellWidth, this.noise000, this.noise100, this.noise010, this.noise110, this.noise001, this.noise101, this.noise011, this.noise111) : this.value;
++                // return NoiseChunk.this.fillingCell ? Mth.lerp3((double)NoiseChunk.this.inCellX / (double)NoiseChunk.this.cellWidth, (double)NoiseChunk.this.inCellY / (double)NoiseChunk.this.cellHeight, (double)NoiseChunk.this.inCellZ / (double)NoiseChunk.this.cellWidth, this.noise000, this.noise100, this.noise010, this.noise110, this.noise001, this.noise101, this.noise011, this.noise111) : this.value;
++                if (NoiseChunk.this.fillingCell) {
++                    // double d = (double)NoiseChunk.this.inCellX / (double)NoiseChunk.this.cellWidth;
++                    // double e = (double)NoiseChunk.this.inCellY / (double)NoiseChunk.this.cellHeight;
++                    // double f = (double)NoiseChunk.this.inCellZ / (double)NoiseChunk.this.cellWidth;
++                    double d = nativeGetInCellX(NoiseChunk.this.nativePtr) / (double)NoiseChunk.this.cellWidth;
++                    double e = nativeGetInCellY(NoiseChunk.this.nativePtr) / (double)NoiseChunk.this.cellHeight;
++                    double f = nativeGetInCellZ(NoiseChunk.this.nativePtr) / (double)NoiseChunk.this.cellWidth;
++                    return Mth.lerp3(d, e, f, this.noise000, this.noise100, this.noise010, this.noise110, this.noise001, this.noise101, this.noise011, this.noise111);
++                } else {
++                    return this.value;
++                }
+             }
+         }
+ 
+diff --git a/src/main/java/net/minecraft/world/level/levelgen/PositionalRandomFactory.java b/src/main/java/net/minecraft/world/level/levelgen/PositionalRandomFactory.java
+index c6ffd8b39f5d422fa38f4687ce4fd869d1eb92a2..9dfa2b4815a53fdf3f133720eed03d2525eeba0f 100644
+--- a/src/main/java/net/minecraft/world/level/levelgen/PositionalRandomFactory.java
++++ b/src/main/java/net/minecraft/world/level/levelgen/PositionalRandomFactory.java
+@@ -14,6 +14,10 @@ public interface PositionalRandomFactory {
+         return this.fromHashOf(seed.toString());
+     }
+ 
++    default long getNativePtr() {
++        return 0L;
++    }
++
+     RandomSource fromHashOf(String seed);
+ 
+     RandomSource at(int x, int y, int z);
+diff --git a/src/main/java/net/minecraft/world/level/levelgen/XoroshiroRandomSource.java b/src/main/java/net/minecraft/world/level/levelgen/XoroshiroRandomSource.java
+index a694bf9a184f75a3009f458111d2d5be91f0b145..9128586ea215f4a72cad28c415135f6208f172c0 100644
+--- a/src/main/java/net/minecraft/world/level/levelgen/XoroshiroRandomSource.java
++++ b/src/main/java/net/minecraft/world/level/levelgen/XoroshiroRandomSource.java
+@@ -2,6 +2,8 @@ package net.minecraft.world.level.levelgen;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+ import com.mojang.serialization.Codec;
++
++import io.rustmc.Glue;
+ import net.minecraft.util.Mth;
+ import net.minecraft.util.RandomSource;
+ 
+@@ -32,6 +34,10 @@ public class XoroshiroRandomSource implements RandomSource {
+         this.randomNumberGenerator = implementation;
+     }
+ 
++    static {
++        System.loadLibrary("mclib");
++    }
++
+     @Override
+     public RandomSource fork() {
+         return new XoroshiroRandomSource(this.randomNumberGenerator.nextLong(), this.randomNumberGenerator.nextLong());
+@@ -113,10 +119,22 @@ public class XoroshiroRandomSource implements RandomSource {
+     public static class XoroshiroPositionalRandomFactory implements PositionalRandomFactory {
+         private final long seedLo;
+         private final long seedHi;
++        private final long nativePtr;
+ 
+         public XoroshiroPositionalRandomFactory(long seedLo, long seedHi) {
+             this.seedLo = seedLo;
+             this.seedHi = seedHi;
++            this.nativePtr = nativeNew(seedLo, seedHi);
++            long ptr = this.nativePtr;
++            Glue.getCleaner().register(this, () -> nativeDelete(ptr));
++        }
++
++        private native static long nativeNew(long seedLo, long seedHi);
++        private native static void nativeDelete(long nativePtr);
++
++        @Override
++        public long getNativePtr() {
++            return this.nativePtr;
+         }
+ 
+         @Override
