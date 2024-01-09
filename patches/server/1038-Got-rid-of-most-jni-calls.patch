@@ -1,0 +1,193 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: NanzeRT <nanotest.vlad@gmail.com>
+Date: Sat, 6 Jan 2024 05:22:53 +0300
+Subject: [PATCH] Got rid of most jni calls
+
+
+diff --git a/src/main/java/io/rustmc/Glue.java b/src/main/java/io/rustmc/Glue.java
+index db23d2f129e27c9596cca69c144c909a2ebf8712..43a634d544b2df340c782ce0f40feeedd47c0b15 100644
+--- a/src/main/java/io/rustmc/Glue.java
++++ b/src/main/java/io/rustmc/Glue.java
+@@ -2,10 +2,29 @@ package io.rustmc;
+ 
+ import java.lang.ref.Cleaner;
+ 
++import net.minecraft.world.level.block.Block;
++import net.minecraft.world.level.block.state.BlockState;
++
+ public class Glue {
+     private static Cleaner cleaner = Cleaner.create();
+ 
+     public static Cleaner getCleaner() {
+         return cleaner;
+     }
++
++    public static int blockStateToId(BlockState state) {
++        return Block.BLOCK_STATE_REGISTRY.getId(state);
++    }
++
++    public static BlockState idToBlockState(int id) {
++        return Block.BLOCK_STATE_REGISTRY.byId(id);
++    }
++
++    public static int blockToId(Block block) {
++        return Block.BLOCK_STATE_REGISTRY.getId(block.defaultBlockState());
++    }
++
++    public static Block idToBlock(int id) {
++        return Block.BLOCK_STATE_REGISTRY.byId(id).getBlock();
++    }
+ }
+diff --git a/src/main/java/net/minecraft/world/level/levelgen/Aquifer.java b/src/main/java/net/minecraft/world/level/levelgen/Aquifer.java
+index c64e9b34d8b4d013c978257fefbf75d53a139541..414a64967914de3fee22aa44ffe758926e3b37c6 100644
+--- a/src/main/java/net/minecraft/world/level/levelgen/Aquifer.java
++++ b/src/main/java/net/minecraft/world/level/levelgen/Aquifer.java
+@@ -9,12 +9,14 @@ import net.minecraft.util.Mth;
+ // import net.minecraft.util.RandomSource;
+ import net.minecraft.world.level.ChunkPos;
+ import net.minecraft.world.level.biome.OverworldBiomeBuilder;
++import net.minecraft.world.level.block.Block;
+ import net.minecraft.world.level.block.Blocks;
+ import net.minecraft.world.level.block.state.BlockState;
+ import net.minecraft.world.level.dimension.DimensionType;
+ // import org.apache.commons.lang3.mutable.MutableDouble;
+ import net.minecraft.world.level.levelgen.DensityFunctions.Noise;
+ import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator.FluidPickerFromNoiseChunk;
++import net.minecraft.world.level.levelgen.XoroshiroRandomSource.XoroshiroPositionalRandomFactory;
+ 
+ import javax.annotation.Nullable;
+ 
+@@ -43,13 +45,18 @@ public interface Aquifer {
+             @Override
+             public BlockState computeSubstance(
+                     DensityFunction.FunctionContext pos, double density) {
++                if (fluidLevelSampler.getClass() != FluidPickerFromNoiseChunk.class)
++                    throw new IllegalStateException(
++                            "fluidLevelSampler.getClass() != FluidPickerFromNoiseChunk.class");
++
+                 return density > 0.0D
+                         ? null
+                         // rustmc
+-                        : ((FluidPickerFromNoiseChunk)fluidLevelSampler)
++                        : ((FluidPickerFromNoiseChunk) fluidLevelSampler)
+                                 // .computeFluid(pos.blockX(), pos.blockY(), pos.blockZ())
+                                 // .at(pos.blockY());
+-                                .computeFluidAt(pos.blockX(), pos.blockY(), pos.blockZ(), pos.blockY());
++                                .computeFluidAt(
++                                        pos.blockX(), pos.blockY(), pos.blockZ(), pos.blockY());
+             }
+ 
+             @Override
+@@ -150,6 +157,8 @@ public interface Aquifer {
+             this.aquiferCache = new Aquifer.FluidStatus[m];
+             // this.aquiferLocationCache = new long[m];
+             // Arrays.fill(this.aquiferLocationCache, Long.MAX_VALUE);
++            if (this.positionalRandomFactory.getClass() != XoroshiroPositionalRandomFactory.class)
++                System.out.println("positionalRandomFactory: " + this.positionalRandomFactory.getClass().getName());
+             if (this.positionalRandomFactory.getNativePtr() == 0) {
+                 throw new IllegalStateException(
+                         "Aquifer requires a native positional random factory");
+@@ -219,18 +228,23 @@ public interface Aquifer {
+             // System.out.printf("x: %d, y: %d, z: %d, density: %f\n", pos.blockX(), pos.blockY(),
+             // pos.blockZ(), density);
+             // System.out.println("native entry point: " + this.nativePtr);
+-            var n =
+-                    this.computeSubstanceNative(
+-                            pos.getNativePtr(), /* pos, */ density, this.nativePtr);
++            // if (pos.getClass() != NoiseChunk.class && pos.getClass() != DensityFunction.SinglePointContext.class)
++            //     throw new IllegalStateException("pos.getClass() != NoiseChunk.class && pos.getClass() != DensityFunction.SinglePointContext.class");
++            var id = this.computeSubstanceNative(
++                            pos.getNativePtr(), /* pos, */
++                            density,
++                            this.nativePtr,
++                            ((FluidPickerFromNoiseChunk) this.globalFluidPicker).getNativePtr());
+             // System.out.println("native exit point: " + this.nativePtr);
+-            return n;
++            return Glue.idToBlockState(id);
+         }
+ 
+-        public native BlockState computeSubstanceNative(
++        public native int computeSubstanceNative(
+                 long posPtr,
+                 // DensityFunction.FunctionContext pos,
+                 double density,
+-                long nativePtr);
++                long nativePtr,
++                long fluidPickerPtr);
+ 
+         @Override
+         public boolean shouldScheduleFluidUpdate() {
+@@ -449,6 +463,18 @@ public interface Aquifer {
+             }
+         }
+ 
++        private static native long makeFluidStatusNative(int fluidLevel, int fluidTypeStateId, int fluidTypeBlockId, boolean isAir);
++
++        private long computeFluidToNative(int blockX, int blockY, int blockZ) {
++            Aquifer.FluidStatus fluidStatus = this.computeFluid(blockX, blockY, blockZ);
++            // return makeFluidStatusNative(fluidStatus.fluidLevel, fluidStatus.fluidType, fluidStatus.fluidType.isAir());
++            return makeFluidStatusNative(
++                    fluidStatus.fluidLevel,
++                    Glue.blockStateToId(fluidStatus.fluidType),
++                    Glue.blockToId(fluidStatus.fluidType.getBlock()),
++                    fluidStatus.fluidType.isAir());
++        }
++
+         private Aquifer.FluidStatus computeFluid(int blockX, int blockY, int blockZ) {
+             Aquifer.FluidStatus fluidStatus =
+                     this.globalFluidPicker.computeFluid(blockX, blockY, blockZ);
+diff --git a/src/main/java/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java b/src/main/java/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java
+index f695f9a424fc608b445ccb2a8552a3d2fe7911e2..dbefb5796442ef2171cc0072c4ed2417c753dd45 100644
+--- a/src/main/java/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java
++++ b/src/main/java/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java
+@@ -89,7 +89,17 @@ public final class NoiseBasedChunkGenerator extends ChunkGenerator {
+                 int aquifer_b1_y,
+                 BlockState aquifer_b1_blockstate,
+                 int i) {
+-            this.nativePtr = newNative(aquifer_b_y, aquifer_b_blockstate, aquifer_b_blockstate.isAir(), aquifer_b1_y, aquifer_b1_blockstate, aquifer_b1_blockstate.isAir(), i);
++            // this.nativePtr = newNative(aquifer_b_y, aquifer_b_blockstate, aquifer_b_blockstate.isAir(), aquifer_b1_y, aquifer_b1_blockstate, aquifer_b1_blockstate.isAir(), i);
++            this.nativePtr = newNative(
++                aquifer_b_y,
++                Glue.blockStateToId(aquifer_b_blockstate),
++                Glue.blockToId(aquifer_b_blockstate.getBlock()),
++                aquifer_b_blockstate.isAir(),
++                aquifer_b1_y,
++                Glue.blockStateToId(aquifer_b1_blockstate),
++                Glue.blockToId(aquifer_b1_blockstate.getBlock()),
++                aquifer_b1_blockstate.isAir(),
++                i);
+             long ptr = this.nativePtr;
+             Glue.getCleaner().register(this, () -> deleteNative(ptr));
+             aquifer_b = new FluidStatus(aquifer_b_y, aquifer_b_blockstate);
+@@ -107,7 +117,8 @@ public final class NoiseBasedChunkGenerator extends ChunkGenerator {
+         }
+ 
+         public BlockState computeFluidAt(int x, int y, int z, int y1) {
+-            return computeFluidAtNative(this.nativePtr, x, y, z, y1);
++            int id = computeFluidAtNative(this.nativePtr, x, y, z, y1);
++            return Glue.idToBlockState(id);
+             // return computeFluid(x, y, z).at(y1);
+         }
+ 
+@@ -117,14 +128,18 @@ public final class NoiseBasedChunkGenerator extends ChunkGenerator {
+ 
+         private native long newNative(
+             int aquifer_b_y,
+-            BlockState aquifer_b_blockstate,
++            // BlockState aquifer_b_blockstate,
++            int aquidef_b_blockstate_id,
++            int aquifer_b_block_id,
+             boolean aquifer_b_is_air,
+             int aquifer_b1_y,
+-            BlockState aquifer_b1_blockstate,
++            // BlockState aquifer_b1_blockstate,
++            int aquidef_b1_blockstate_id,
++            int aquifer_b1_block_id,
+             boolean aquifer_b1_is_air,
+             int i);
+         private native void deleteNative(long nativePtr);
+-        private native BlockState computeFluidAtNative(long nativePtr, int x, int y, int z, int y1);
++        private native int computeFluidAtNative(long nativePtr, int x, int y, int z, int y1);
+     }
+ 
+     // private static Aquifer.FluidPicker createFluidPicker(NoiseGeneratorSettings settings) {
